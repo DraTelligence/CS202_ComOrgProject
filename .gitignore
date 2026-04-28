@@ -1,0 +1,38 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor and IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python cache and virtual environments
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build and simulation outputs
+build/
+out/
+obj/
+tmp/
+temp/
+*.log
+*.vcd
+*.fst
+*.lxt
+*.lxt2
+*.out
+*.bin
+*.elf
+*.hex
+*.o
+*.exe
+
+# Tool-generated files
+*.jou
+*.str
