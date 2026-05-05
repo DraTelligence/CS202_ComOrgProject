@@ -36,3 +36,31 @@ temp/
 # Tool-generated files
 *.jou
 *.str
+
+# ==========================================
+# Vivado Git Ignore List
+# ==========================================
+*.jou
+*.log
+*.str
+*.dmp
+*.pb
+*.backup.*
+.Xil/
+*.sim/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.gen/
+*.wdb
+*.vcd
+xsim.dir/
+.DS_Store
+Thumbs.db
+
+# Ignore the "runs" directory, but force the submission of the ".bit" and ".dcp" files under "runs/impl_1".              忽略.runs目录，但强制提交runs/impl_1下的.bit和.dcp文件
+*.runs/*
+!*.runs/impl_1/
+*.runs/impl_1/*
+!*.runs/impl_1/*.bit
+!*.runs/impl_1/*.dcp
