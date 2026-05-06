@@ -430,139 +430,149 @@ module fclass (
 ---
 
 ### 18. fquant.sv (Float → Q3.4 Quantization)
+*** Begin Module List (categorized) ***
 
-**Purpose:** Convert IEEE-754 fp16 to Q3.4 fixed-point (1 sign + 3 int + 4 frac bits).
+# Module List - CS202 SystemVerilog CPU Project
 
-**Module Signature:**
-\\\systemverilog
-module fquant (
-    input logic [15:0] fp16_in,   // IEEE-754 fp16
-    output logic [7:0] q34_out    // Q3.4 fixed-point (or two's complement for negative)
-);
-\\\
-
-**Implementation Notes:**
-- Extract mantissa, exponent, sign
-- Convert to fixed-point with quantization (rounding)
-- Output as 8-bit two's complement for negative values
+This document lists the planned SystemVerilog modules, grouped by whether they are shared between modes, specific to the single-cycle implementation, or specific to the 5-stage pipeline. Each entry includes the module purpose and a concise signature to keep integration consistent.
 
 ---
 
-### 19. forwarding_unit.sv (Data Forwarding & Hazard Detection)
+## Shared Modules (used by both SINGLE and PIPELINE)
 
-**Purpose:** Generate forwarding control signals for EX stage data inputs.
+- `register_file.sv` — 32 x 32-bit registers, 2R/1W
+  - Signature:
+    ```systemverilog
+    module register_file(
+        input logic clk, reset,
+        input logic [4:0] rs1, rs2, rd,
+        input logic [31:0] write_data,
+        input logic write_en,
+        output logic [31:0] data1, data2
+    );
+    ```
 
-**Module Signature:**
-\\\systemverilog
-module forwarding_unit (
-    input logic [4:0] rs1, rs2,          // Current instruction source regs
-    input logic [4:0] mem_rd, wb_rd,     // Previous instruction dest regs
-    input logic mem_write_en, wb_write_en,
-    
-    output logic forward_rs1,            // 0=no forward, 1=from EX/MEM
-    output logic forward_rs2,
-    output logic forward_rs1_wb,         // 1=from MEM/WB
-    output logic forward_rs2_wb
-);
-\\\
+- `alu.sv` — 32-bit ALU (ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU)
+  - Signature:
+    ```systemverilog
+    module alu(
+        input logic [31:0] a, b,
+        input logic [3:0] op,
+        output logic [31:0] result
+    );
+    ```
 
----
+- `imem.sv` — Parameterized instruction memory (sync read, init from hex)
+  - Signature:
+    ```systemverilog
+    module imem #(
+        parameter ADDR_WIDTH = 15
+    )(
+        input logic [ADDR_WIDTH-1:0] addr,
+        input logic clk,
+        output logic [31:0] data
+    );
+    ```
 
-### 20. hazard_control.sv (Load-Use Stall Detection)
+- `dmem.sv` — Parameterized data memory with byte-enable
+  - Signature:
+    ```systemverilog
+    module dmem #(
+        parameter ADDR_WIDTH = 15
+    )(
+        input logic [ADDR_WIDTH-1:0] addr,
+        input logic [31:0] write_data,
+        input logic write_en,
+        input logic [3:0] byte_en,
+        input logic clk,
+        output logic [31:0] read_data
+    );
+    ```
 
-**Purpose:** Detect load-use data hazards, assert stall signal.
+- `control_unit.sv` — Instruction decoder → control signals
+  - Signature:
+    ```systemverilog
+    module control_unit(
+        input logic [6:0] opcode,
+        input logic [2:0] funct3,
+        input logic [6:0] funct7,
+        output logic [3:0] alu_op,
+        output logic alu_sel_b, mem_read, mem_write,
+        output logic [1:0] wb_sel, reg_write, branch, jump, jalr
+    );
+    ```
 
-**Module Signature:**
-\\\systemverilog
-module hazard_control (
-    input logic [4:0] id_rs1, id_rs2,    // Current ID stage source regs
-    input logic [4:0] ex_rd,              // EX stage destination reg
-    input logic ex_mem_read,              // EX stage is a load
-    
-    output logic stall_signal             // Asserts 1 if load-use hazard detected
-);
-\\\
-
-**Stall Logic:**
-- If (ex_mem_read) AND ((ex_rd == id_rs1) OR (ex_rd == id_rs2)) → stall_signal = 1
-
----
-
-### 21. cpu_tb.sv (Testbench)
-
-**Purpose:** Instantiate CPU, drive clock/reset, monitor outputs.
-
-**Module Signature:**
-\\\systemverilog
-module cpu_tb;
-    logic clk, reset;
-    logic [31:0] pc, result;
-    
-    cpu_top cpu (.clk(clk), .reset(reset), .pc(pc), .debug_result(result));
-    
-    // Clock generation
-    initial forever #5 clk = ~clk;
-    
-    // Test stimulus and monitoring...
-endmodule
-\\\
-
----
-
-## Module Dependency & Integration Order
-
-\\\
-cpu_top (top-level)
-  ├─ fetch_stage → if_id_reg → decode_stage
-  │              ├─ register_file (2R1W)
-  │              ├─ control_unit
-  │              └─ imem (sync read)
-  │
-  ├─ id_ex_reg → execute_stage
-  │              ├─ alu
-  │              ├─ forwarding_unit (routes data)
-  │              └─ hazard_control (generates stall)
-  │
-  ├─ ex_mem_reg → memory_stage
-  │               └─ dmem (1R1W)
-  │
-  ├─ mem_wb_reg → writeback_stage
-  │
-  ├─ Special modules: popcnt.sv, fclass.sv, fquant.sv
-  │   (integrated into execute or decode stages as needed)
-  │
-  └─ cpu_tb (testbench, not synthesized)
-\\\
+- Special function modules (kept shared so either core can call them):
+  - `popcnt.sv` — population count (`$countones` usage)
+  - `fclass.sv` — fp16 classification
+  - `fquant.sv` — fp16 → Q3.4 quantization
 
 ---
 
-## Implementation Checklist
+## Single-Cycle Specific Modules
 
-- [ ] ALU (all 10 operations)
-- [ ] Register file (2R1W, x0 hardwired)
-- [ ] Control unit (opcode → signals)
-- [ ] Fetch stage (PC, IMEM read)
-- [ ] Decode stage (fields, RF read, immediate generation)
-- [ ] Execute stage (ALU, address calc, branch resolution)
-- [ ] Memory stage (DMEM interface with byte enables)
-- [ ] Write-back stage (MUX for ALU/MEM/PC+4)
-- [ ] All 4 pipeline registers (IF/ID, ID/EX, EX/MEM, MEM/WB)
-- [ ] Forwarding unit (EX/MEM and MEM/WB muxes)
-- [ ] Hazard control (load-use detection)
-- [ ] IMEM & DMEM (BRAM, sync read/write)
-- [ ] Special instructions: POPCNT, FCLASS, FQUANT
-- [ ] Testbench (stimulus, monitoring, result checking)
-- [ ] Integration & system test
+- `cpu_single_cycle.sv` — Single-cycle top for functional validation (reuses shared modules)
+  - Signature:
+    ```systemverilog
+    module cpu_single_cycle(
+        input logic clk, reset,
+        output logic [31:0] pc_out,
+        output logic [31:0] debug_out
+    );
+    ```
+
+Notes: reuses `imem`, `dmem`, `register_file`, `alu`, and special modules. Designed for fast functional simulation rather than FPGA timing closure.
 
 ---
 
-## Notes on Code Organization
+## Pipeline-Specific Modules (5-stage)
 
-**Why code sketches in this document?**
+- `cpu_pipeline.sv` — Top-level wrapper that instantiates pipeline stages
+  - Signature:
+    ```systemverilog
+    module cpu_pipeline(
+        input logic clk, reset,
+        output logic [31:0] pc_out,
+        output logic [31:0] debug_out
+    );
+    ```
 
-1. **Port definitions are reference material:** You'll flip back to these during implementation 50+ times.
-2. **Signal naming conventions:** Established here ensure consistency (e.g., \ctrl_*\, \mem_*\, \ex_*\).
-3. **Integration guide:** Knowing which module outputs connect to which inputs upfront reduces wiring errors.
-4. **Not a replacement for implementation:** Full code goes in individual .sv files; this is the architecture blueprint.
+- Pipeline stages and registers (file-per-module):
+  - `fetch_stage.sv` — IF logic + PC management
+  - `if_id_reg.sv` — IF/ID pipeline register
+  - `decode_stage.sv` — ID logic, RF reads, control generation
+  - `id_ex_reg.sv` — ID/EX pipeline register
+  - `execute_stage.sv` — EX logic, ALU, branch resolution, forwarding inputs
+  - `ex_mem_reg.sv` — EX/MEM pipeline register
+  - `memory_stage.sv` — MEM logic, DMEM interface, byte enables
+  - `mem_wb_reg.sv` — MEM/WB pipeline register
+  - `writeback_stage.sv` — WB mux and RF write interface
 
-Each module will have its own file with complete implementation, simulation setup, and unit tests.
+- Forwarding & hazard units (support modules):
+  - `forwarding_unit.sv` — generate forwarding control signals
+  - `hazard_control.sv` — detect load-use hazards and assert stall
+
+---
+
+## Testbench and Aux
+
+- `cpu_tb.sv` — top-level testbench that can instantiate `cpu_single_cycle` or `cpu_pipeline` via `cpu_top` or compile-time macro
+- Helper scripts: `sim_single.sh/.ps1`, `sim_pipeline.sh/.ps1` (invoke iverilog/vvp)
+
+---
+
+## Integration Notes
+
+- `cpu_top.sv` will be the project top: it latches mode at reset (`mode_select`) and instantiates either `cpu_single_cycle` or `cpu_pipeline` while sharing `imem`, `dmem`, and `register_file` instances to minimize duplication.
+- Keep interface names consistent across modules: `ctrl_*`, `mem_*`, `pc`, `instr`, `rs1_data`, `rs2_data`, `alu_result`, `wb_data`.
+
+---
+
+## Implementation Checklist (categorized)
+
+- Shared: `alu`, `register_file`, `imem`, `dmem`, `control_unit`, `popcnt`, `fclass`, `fquant`
+- Single-cycle: `cpu_single_cycle`, simple test programs
+- Pipeline: all pipeline stages, forwarding_unit, hazard_control, pipeline registers
+- Test: `cpu_tb.sv`, sim scripts, sample `program.hex`
+
+*** End Module List ***

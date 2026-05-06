@@ -1,4 +1,147 @@
-﻿# Architecture Design - CS202 SystemVerilog CPU Project
+﻿# Architecture Design — Dual-Mode CPU (SystemVerilog)
+
+This document extends the original 5-stage pipeline description to a dual-mode CPU design that supports both a functional single-cycle core and an optimized 5-stage pipeline core. The goal is to enable fast functional verification (single-cycle) and a performance-oriented implementation (pipeline) while minimizing duplicated logic via shared modules.
+
+## Design Overview (Dual Mode)
+
+- Modes: `SINGLE` (single-cycle) and `PIPELINE` (5-stage pipeline).
+- The top-level `cpu_top` latches a `mode` input during reset and instantiates either `cpu_single_cycle` or `cpu_pipeline`. Shared modules such as `imem`, `dmem`, `register_file`, `alu`, and special-function units are reused by both cores where possible.
+- Shared modules: `alu`, `register_file`, `control_unit`, `imem`, `dmem`, `popcnt`, `fclass`, `fquant`.
+
+Design goals: reduce duplicated code through parameterization and shared instances, enable quick functional checks with the single-cycle core, and incrementally add pipeline features (forwarding, stalls) to the pipeline core.
+---
+
+
+## 5-Stage Pipeline (Recap)
+
+- IF: instruction fetch and PC update (PC+4 / branch / JALR)
+- ID: instruction decode, immediate generation, register reads, control signal generation
+- EX: ALU operations, address computation, branch evaluation and target calculation
+- MEM: data memory access (byte/half/word with byte enables), load sign/zero extension
+- WB: write-back to register file (ALU result / memory / PC+4)
+
+Key pipeline features: pipeline registers (IF/ID, ID/EX, EX/MEM, MEM/WB), forwarding from EX/MEM and MEM/WB into EX, a 1-cycle load-use stall, and a simple not-taken branch policy with flush on taken.
+
+---
+
+
+## Single-Cycle Core (Overview)
+
+- `cpu_single_cycle` implements IF→ID→EX→MEM→WB in a single clock cycle and is intended for quick functional verification and unit testing.
+- Note: the single-cycle core has long combinational paths and is not intended for high-frequency FPGA synthesis; use it primarily for simulation and correctness checks.
+- The single-cycle core should reuse shared modules (`alu`, `register_file`, `imem`, `dmem`, `control_unit`, special modules).
+
+Pros: straightforward to implement and debug. Cons: not suitable for timing-constrained FPGA builds.
+
+---
+
+
+## Top-Level `cpu_top` (Mode Selection)
+
+Suggested top-level interface:
+
+```systemverilog
+module cpu_top (
+  input logic clk, reset,
+  input logic mode_select, // 0 = SINGLE, 1 = PIPELINE (latched at reset)
+  output logic [31:0] pc,
+  output logic [31:0] debug_result
+);
+```
+
+Design notes:
+- `mode_select` is latched during reset; after reset the selected core is active until the next reset (no runtime hot-swap).
+- `imem`, `dmem`, and `register_file` are parameterized for address/depth and can be shared between the two cores to reduce duplication.
+- Top-level selects outputs (e.g., `pc`, `debug_result`) from the active core via multiplexers.
+
+Avoid runtime mode switching to prevent state synchronization complexities.
+
+---
+
+
+## Memory Parameterization (IMEM / DMEM)
+
+- Use parameters such as `ADDR_WIDTH` or `DEPTH` in `imem` and `dmem` to allow compile/synthesis-time size configuration. Example:
+
+```systemverilog
+module imem #(
+  parameter ADDR_WIDTH = 15
+) (
+  input logic [ADDR_WIDTH-1:0] addr,
+  input logic clk,
+  output logic [31:0] data
+);
+```
+
+- The top-level can choose sizes for different builds. For simulation, a single maximum-size memory can be used and initialized with small programs.
+
+Benefits: avoids duplicating memory modules per mode and eases resource planning for the FPGA target.
+
+---
+
+
+## Special Instruction & Floating-Point Strategy
+
+Special instructions (`POPCNT`, `FCLASS`, `FQUANT`) should be implemented as separate modules and invoked by the EX stage under control signals generated in decode:
+
+- Advantages: the integer datapath remains 32-bit simple; special/FP logic can be tested and optimized separately.
+- Implementation: decode detects custom opcodes and asserts `ctrl_special`; the EX stage routes operands to a special-function unit (e.g., `popcnt`) and consumes the result as ALU output or write-back input.
+- For full IEEE floating-point support, plan a multi-cycle FPU module later and add handshake/issue logic to integrate it with the pipeline.
+
+Conclusion: keep the integer core clean and use separate modules for teaching-focused FP/quantization features.
+
+---
+
+
+## Impact and Required Changes
+
+Suggested changes without altering the ISA semantics:
+
+1. Ensure `docs` reflect the dual-mode design (this file).
+2. Update `MODULE_LIST.md` to categorize modules (shared / single-cycle / pipeline) — done in parallel.
+3. Make `imem`/`dmem` parameterized or use a single maximum-sized memory with program initialization files.
+4. Add `cpu_single_cycle.sv` skeleton reusing shared units for quick verification.
+5. Implement `cpu_top.sv` that latches `mode_select` at reset and multiplexes top-level outputs.
+
+These changes are structural and prioritize parameterization and top-level selection logic to minimize duplicated code.
+
+---
+
+
+## Testing & Validation Recommendations
+
+- Start with the single-cycle core to validate ISA behavior (testcases: Fibonacci, popcount, load/store patterns).
+- For the pipeline core, incrementally add pipeline registers, then forwarding, and finally hazard/stall logic. Validate load-use stalls and branch flush semantics.
+- Provide two simulation entry points or macros: `sim_single` and `sim_pipeline`.
+
+Example commands (iverilog + vvp):
+
+```powershell
+# Single-cycle simulation
+iverilog -g2012 -o sim_single rtl/*.sv tb/cpu_tb.sv -DCPU_MODE_SINGLE
+vvp sim_single
+
+# Pipeline simulation
+iverilog -g2012 -o sim_pipeline rtl/*.sv tb/cpu_tb.sv -DCPU_MODE_PIPELINE
+vvp sim_pipeline
+```
+
+(`-D` macros may be used to select modes at compile time or use `cpu_top`'s `mode_select` port.)
+
+---
+
+
+## Summary
+
+- Do not rewrite the ISA; focus on top-level `cpu_top`, memory parameterization, and a `cpu_single_cycle` skeleton that reuses shared modules.
+- Latch mode at reset (no hot-swap) to keep implementation and verification simple.
+- Keep the integer datapath simple; add special-function FP/quant modules independently. A full multi-cycle FPU is a future enhancement.
+
+Next steps I can take now:
+1. Update `MODULE_LIST.md` to explicitly categorize modules (shared / single-cycle / pipeline).  
+2. Generate `rtl/` templates: `cpu_top.sv`, `cpu_single_cycle.sv`, parameterized `imem.sv` and `dmem.sv`.
+Please confirm which to prioritize.
+# Architecture Design - CS202 SystemVerilog CPU Project
 
 ## 5-Stage Pipeline Overview
 
